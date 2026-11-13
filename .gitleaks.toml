@@ -1,0 +1,245 @@
+# .gitleaks.toml — gate de segredo do repositório: default embutido ESTENDIDO +
+# regras explícitas da casa.
+#
+# Usado pelo hook local `.githooks/pre-commit` (instalação: `git config
+# core.hooksPath .githooks`) e por varredura manual:
+#   gitleaks git --pre-commit --staged -c .gitleaks.toml
+#
+# Duas camadas, de propósito:
+#   1. `[extend] useDefault = true` — o ruleset embutido do gitleaks (~190 regras
+#      de provedor: Stripe, Twilio, SendGrid, Azure, Discord, GitLab, ...). Sem
+#      esta seção o arquivo SUBSTITUI o embutido em vez de somar a ele, e o gate
+#      passa a enxergar só os formatos que alguém lembrou de escrever aqui. Foi
+#      exatamente o buraco do SEC-GATE-004 (card t_67ea3ee6): a fixture de 5
+#      classes ficava em 2/5 com este arquivo e em 5/5 no default.
+#   2. As regras explícitas abaixo, que rodam POR CIMA do default e cobrem onde
+#      ele é permissivo: o default é uma rede para *repositório público* e
+#      allowlista "chave de exemplo" — `AKIA` + 16 caracteres e header de chave
+#      privada passam sem hit (medido em 8.30.1, card t_016ba6b0). Aqui essas
+#      classes não têm allowlist: se o formato bate, o commit para.
+#
+# Critério de calibração: falso positivo custa uma linha de allowlist (e é
+# registrado na linha abaixo da regra que o gerou); falso negativo custa a
+# chave. Regras de *formato de provedor* não têm allowlist nenhuma. Só a regra
+# genérica (a que não tem provedor definido) aceita placeholders, porque ali o
+# valor é prosa, não chave — e mesmo ela só aceita placeholder, não "valor que
+# parece aleatório": template com token colado é achado, não isenção.
+
+title = "gate de segredo — default estendido + regras explícitas"
+
+[extend]
+useDefault = true
+# `generic-api-key` do default fica DESLIGADA de propósito: é a regra de ruído do
+# ruleset embutido — aceita atribuição sem aspas, sem entropia mínima de verdade e
+# com `key` no meio de prosa. Medido nos 19 repos: 906 dos 959 achados do default em
+# `hermes-contrib` (espelho do upstream, cheio de credencial de mentira em teste) e
+# 100% dos falsos positivos nos repos da casa. A cobertura genérica fica com
+# `generic-secret-assignment` abaixo, que exige valor ENTRE ASPAS com 16+ caracteres
+# e tem allowlist de placeholder — mais estreita no formato, mais ampla no nome.
+disabledRules = ["generic-api-key"]
+
+# ── Blocos de chave privada ────────────────────────────────────────────────
+# Nota: os headers são escritos como `-{5}BEGIN ...` de propósito — assim o
+# próprio arquivo de regras não casa com a regra (se casasse, o commit que
+# instala o gate seria bloqueado por ele mesmo).
+
+[[rules]]
+id = "pem-private-key"
+description = "Bloco de chave privada PEM"
+regex = '''-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}'''
+
+[[rules]]
+id = "openssh-private-key"
+description = "Chave privada OpenSSH"
+regex = '''-{5}BEGIN OPENSSH PRIVATE KEY-{5}'''
+
+[[rules]]
+id = "private-key-inline"
+description = "Material de chave privada PKCS (base64 longo após header)"
+regex = '''-{5}BEGIN (RSA |EC |DSA |PGP )?PRIVATE KEY-{5}[\s\S]{0,64}?[A-Za-z0-9+/=]{40,}'''
+
+# ── Credenciais de provedor (sem allowlist, de propósito) ──────────────────
+[[rules]]
+id = "aws-access-key"
+description = "AWS access key id"
+regex = '''(AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}'''
+
+[[rules]]
+id = "aws-secret-key"
+description = "AWS secret access key (atribuição, inclusive JSON)"
+# O `["']?` antes do separador é o que faz a forma JSON (`"aws_secret_access_key":
+# "..."`) casar: sem ele o nome tem aspas fechando antes dos dois-pontos e a
+# regra não enxerga nada (SEC-GATE-004, caso 3).
+regex = '''(?i)(aws_secret_access_key|secret_access_key)["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}'''
+
+[[rules]]
+id = "github-token"
+description = "Token do GitHub (ghp_/gho_/ghu_/ghs_/ghr_/github_pat_)"
+regex = '''(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})'''
+
+# FRONTEIRA: `\bsk-` não ancora (mesmo conserto do vault em
+# `pia-automation/gitleaks/vaults/_base.toml`, card t_f0ace0b7 — 10/11/2026,
+# propagado às 19 cópias pelo card t_63663000). O `\b` do Go/RE2 só considera
+# `[0-9A-Za-z_]` como palavra, então `gdańsk-…` vira `gdań|sk-…` e o slug de uma
+# matéria passa como chave. Lookbehind NÃO existe em RE2: `(?<!…)` faz o
+# gitleaks abortar com `panic: bad perl operator`, ou seja, gate morto. A forma
+# portátil é consumir o separador numa classe negativa Unicode e devolver o
+# segredo por `secretGroup`. Continua sem allowlist, como as demais regras
+# explícitas daqui: se o formato bate, o commit para.
+[[rules]]
+id = "openai-anthropic-key"
+description = "Chave estilo OpenAI/Anthropic (sk-/sk-ant-/sk-proj-)"
+regex = '''(?:^|[^\p{L}\p{N}_])(sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,})'''
+secretGroup = 1
+
+[[rules]]
+id = "google-api-key"
+description = "Google API key"
+regex = '''AIza[0-9A-Za-z_\-]{35}'''
+
+[[rules]]
+id = "slack-token"
+description = "Token do Slack"
+regex = '''xox[baprs]-[0-9A-Za-z\-]{10,}'''
+
+[[rules]]
+id = "elevenlabs-key"
+description = "Chave da ElevenLabs"
+regex = '''sk_[0-9a-f]{48}'''
+
+[[rules]]
+id = "bearer-token"
+description = "Bearer token literal"
+regex = '''(?i)bearer\s+[A-Za-z0-9._\-]{20,}'''
+
+[[rules]]
+id = "api-hash"
+description = "Hash de API no formato do Telegram (api_hash de 32 hexadecimais)"
+# `TELEGRAM_API_HASH` não tem palavra-chave que a regra genérica reconheça (KEY, TOKEN,
+# SECRET, PASSWORD, …): o valor é hex de 32 e passava batido desde que o
+# `generic-api-key` do default — que cobria esse nome — foi desligado por ruído. Aqui o
+# nome é `api_hash` e o valor é hex de 32 EXATO: hash de commit (40) e checksum de
+# arquivo não casam.
+regex = '''(?i)(?:[a-z0-9]+[_-])*api[_ -]?hash\b["']?\s*[:=]\s*["']?[0-9a-f]{32}["']?'''
+[rules.allowlists]
+description = "Placeholder canônico: bloco de 16 hex repetido 2×, nunca credencial"
+# Allowlist por VALOR do placeholder, não por caminho e não por forma: o
+# `telegram/.env.example` do pia-automation carrega `abcdef1234567890` duas vezes e o
+# gate tem de continuar varrendo aquele arquivo — hash real colado ao lado dele é achado
+# (card t_b82301e8). Por isso a isenção mora aqui, no valor, e não numa isenção de path.
+#
+# Ancorada no FIM do match (`[:=]` … `$`) e com os três valores escritos por inteiro: só
+# o placeholder INTEIRO é isentado — `abcdef1234567890` seguido de 16 hex sorteados
+# continua sendo detectado (teste `tests/test_api_hash_placeholder.py`).
+#
+# Medido em 8.30.1: funciona sob `--redact` (é como o hook roda) porque a allowlist é
+# avaliada sobre o match CRU, antes de a redação trocar o valor por `REDACTED` — o que
+# não funciona sob `--redact` é padronizar por FORMA (ex.: "só maiúsculas"), não ancorar
+# na literal. Medido: 0 achados para `abcdef…`/`012345…`, 1 achado para
+# `secrets.token_hex(16)`, com e sem `--redact`.
+regexTarget = "match"
+regexes = [
+  '''(?i)[:=]\s*["']?(?:abcdef1234567890abcdef1234567890|0123456789abcdef0123456789abcdef|abcdef0123456789abcdef0123456789)["']?\s*$''',
+]
+
+# ── Arquivo .env staged (o clássico) ──────────────────────────────────────
+# Duas camadas: (a) qualquer atribuição não-vazia num `.env` bloqueia —
+# `.env` versionado é erro por convenção, não por conteúdo; (b) a regra por
+# nome de variável, que pega `.env.local`, `.env.production` etc.
+# `.env.example`/`.env.sample`/`.env.template` são isentos de (a): são modelos
+# por definição (lá `DEBUG=false` é conteúdo normal). A isenção de (b) NÃO é por
+# caminho: é pelo VALOR ser placeholder. Um `.example` com token aleatório colado
+# é achado — foi o caso 2 do SEC-GATE-004, que a antiga allowlist por caminho
+# isolava antes da regex rodar.
+
+[[rules]]
+id = "dotenv-file-staged"
+description = "Arquivo .env versionado (qualquer atribuição não-vazia)"
+path = '''(?i)(^|/)\.env(\.[\w.-]+)?$'''
+regex = '''(?m)^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*\S'''
+[rules.allowlists]
+description = "Modelos versionáveis: qualquer atribuição ali é esperada"
+paths = [
+  '''(?i)(^|/)\.env\.(example|sample|template)$''',
+]
+
+[[rules]]
+id = "dotenv-assignment"
+description = "Atribuição de segredo dentro de arquivo .env"
+path = '''(?i)(^|/)\.env(\.[\w.-]+)?$'''
+regex = '''(?i)^\s*[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|SENHA)[A-Z0-9_]*\s*=\s*\S{8,}'''
+[rules.allowlists]
+regexTarget = "match"
+regexes = [
+  # Placeholder de verdade: marcador delimitado, referência de ambiente ou prosa.
+  '''(?i)^\s*[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|SENHA)[A-Z0-9_]*\s*=\s*(<[^>]*>|\{\{.*\}\}|\$\{.*\}|)$''',
+  '''(?i)^\s*[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|SENHA)[A-Z0-9_]*\s*=\s*(your[_-]|my[_-]|change[_-]?me|xxx+|todo|replace|sua[_-]|a[_-]?definir)''',
+  # Vocabulário de placeholder: o mesmo do valor "genérico" abaixo. Template com
+  # `POSTGRES_PASSWORD=example-...` é modelo, não credencial.
+  '''(?i)^\s*[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|SENHA)[A-Z0-9_]*\s*=\s*\S*(example|sample|dummy|fake|fixture|placeholder|redacted|changeme)\S*\s*$''',
+  # Credencial de desenvolvimento local, pública por construção (POSTGRES_PASSWORD=
+  # postgres em compose de exemplo). Não é segredo: é o default do serviço.
+  '''(?i)^\s*[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|SENHA)[A-Z0-9_]*\s*=\s*["']?(postgres|mysql|mariadb|redis|root|admin|password|passwd|secret|test|dev|local|example|sample|none|null|minioadmin)["']?\s*$''',
+]
+
+# ── Atribuição genérica (única regra com allowlist de placeholder) ────────
+# Exige aspas no valor + 16 caracteres: `token = localStorage.getItem(...)` e
+# `password: process.env.X` não casam (referência de ambiente, sem aspas).
+# Aceita a forma JS/JSON `"api_key": "..."` (aspas fechando antes do `:`).
+# O nome do campo pode vir PREFIXADO/SUFIXADO (`SMTP_PASSWORD`, `aws_secret_
+# access_key`, `DJANGO_SECRET_KEY`): o `\b` da versão anterior exigia fronteira
+# de palavra e `_` é caractere de palavra, então todo nome de ambiente — que é
+# o formato normal — passava batido (SEC-GATE-004, casos 3 e 4). Prefixo/sufixo
+# aqui só aceitam `_`/`-` como separador, para não abrir falso positivo em
+# `tokenizer = "..."`.
+# O sufixo depois da palavra-chave é FECHADO (`_key`, `_value`, `_id`, ...) e não
+# curinga: `_DEFAULT_TOKEN_ENV = "OP_SERVICE_ACCOUNT_TOKEN"` e `PASSWORD_STORE` são
+# NOME de variável, não valor — com sufixo livre a regra acusava os dois. ANOTE:
+# allowlist por FORMA DO VALOR não funciona aqui — sob `--redact` (o hook roda
+# assim) o texto que a allowlist vê já contém `REDACTED`, e qualquer padrão de
+# MAIÚSCULAS casa o próprio marcador: medido, isentava tudo. Por isso a precisão
+# mora na regex da regra, não na allowlist.
+[[rules]]
+id = "generic-secret-assignment"
+description = "Atribuição literal de segredo genérico (nome prefixado incluso)"
+regex = '''(?i)(?:[a-z0-9]+[_-])*(?:api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?key|secret|token|passwd|password|passphrase|senha)(?:_(?:key|value|val|token|secret|id|hash|string))*["']?\s*[:=]\s*["']([A-Za-z0-9_\-/+=.]{16,})["']'''
+secretGroup = 1
+# Piso de entropia (Shannon, bits/caractere) sobre o VALOR: 16 caracteres de prosa
+# ou de nome de chave (`hermes.pty.attach.token`) passam de 16 letras mas não são
+# segredo; um valor aleatório de 16+ caracteres fica acima de 3,9. Medido no
+# espelho `hermes-contrib`: corta metade dos falsos positivos do upstream sem
+# derrubar nenhum dos 5 casos da fixture do SEC-GATE-004.
+entropy = 3.5
+[rules.allowlists]
+# `match` (não `line`): isentar pelo texto da ATRIBUIÇÃO, não pela linha inteira —
+# um comentário "exemplo" ao lado não pode cegar o valor colado ao lado dele.
+regexTarget = "match"
+regexes = [
+  '''(?i)(example|sample|dummy|fake|placeholder|changeme|change[_-]me|redacted|sua[_-]?chave|your[_-]|my[_-]|add[_-]your|insira|coloque|<[A-Za-z_]+>|\{\{|\$\{|process\.env|os\.environ|getenv)''',
+  # Cloudflare Web Analytics: o "token" do beacon é público por construção — vai
+  # em claro no HTML de toda página. Não é credencial (medido em sites-plataforma,
+  # Head.tsx: comentário "Token is public by design").
+  '''(?i)data-cf-beacon''',
+]
+
+# ── Ruído conhecido (não é segredo por construção) ────────────────────────
+[allowlist]
+description = "Arquivos de lock e binários: entropia alta sem credencial"
+paths = [
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)Cargo\.lock$''',
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''\.(mp4|m4a|mp3|wav|epub|pdf|png|jpe?g|gif|ico|icns|svg|woff2?|ttf|otf|zip|excalidraw|lock)$''',
+  '''(^|/)\.gitleaks\.toml$''',
+]
+# Isenções de LINHA que valem para qualquer regra (inclusive as do default
+# estendido). Cada uma existe por um falso positivo medido, com o motivo ao lado:
+regexTarget = "line"
+regexes = [
+  # sites-plataforma, Head.tsx: token do beacon do Cloudflare Web Analytics é
+  # público por construção — vai em claro no HTML de toda página.
+  '''(?i)data-cf-beacon''',
+  # pia-automation, gdelt/README.md: prosa ("a free, keyless, 15-minute-updating
+  # graph") casando o `key` da regra genérica do default.
+  '''(?i)\bkeyless\b''',
+]
