@@ -84,13 +84,37 @@ regex = '''(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})'''
 # matéria passa como chave. Lookbehind NÃO existe em RE2: `(?<!…)` faz o
 # gitleaks abortar com `panic: bad perl operator`, ou seja, gate morto. A forma
 # portátil é consumir o separador numa classe negativa Unicode e devolver o
-# segredo por `secretGroup`. Continua sem allowlist, como as demais regras
-# explícitas daqui: se o formato bate, o commit para.
+# segredo por `secretGroup`. A única isenção desta regra é a do marcador
+# sintético declarado, logo abaixo (ADR-0127) — e ela é de VALOR ancorado no
+# começo do token, não de caminho nem de forma.
 [[rules]]
 id = "openai-anthropic-key"
 description = "Chave estilo OpenAI/Anthropic (sk-/sk-ant-/sk-proj-)"
 regex = '''(?:^|[^\p{L}\p{N}_])(sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,})'''
 secretGroup = 1
+[rules.allowlists]
+description = "Token SINTÉTICO declarado: `sk-<marcador><separador><corpo>` (ADR-0127)"
+# Exceção declarada, e não allowlist comum (card `t_08d2d5ab`, medido em 20/11/2026 no
+# `social-pipeline` `tests/e2e.py:955`): o repo que testa o próprio gate de segredo precisa de
+# uma string COM FORMA de chave, e o gate reprovava o teste que prova que ele acerta.
+#
+# Por que é seguro: a isenção mora DENTRO do token e está ancorada no INÍCIO dele
+# (`^sk-<palavra><separador>`), então (a) valor que apenas CONTENHA a palavra continua achado, e
+# (b) `sk-` + algoritmo OpenSSH continua achado; e uma credencial real prefixada com o marcador
+# deixa de ser a credencial que o provedor emitiu. O vocabulário é o mesmo das allowlists de
+# VALOR deste arquivo e o mesmo do regex do `bin/gate.py` (`SINTETICOS`) — as duas réguas não
+# podem divergir sobre o que é placeholder declarado (teste `tests/test_gate.py`).
+#
+# Isenção de token, nunca de arquivo: `sk-ant-…` (ou qualquer formato sem marcador) na MESMA
+# linha continua bloqueando o commit.
+regexTarget = "match"
+# Sem `^`: com `secretGroup = 1` o alvo da allowlist é o match (que pode começar no separador
+# consumido pela regra, ex. `"sk-…`), então a âncora de início de string recusaria justamente o
+# caso legítimo — medido em 8.30.1. A estreiteza vem de exigir o marcador IMEDIATAMENTE depois de
+# `sk-`, não de ancorar na linha.
+regexes = [
+  '''(?i)sk-(?:fixture|exemplo|example|dummy|fake|placeholder|changeme|redacted)[-_]''',
+]
 
 [[rules]]
 id = "google-api-key"
